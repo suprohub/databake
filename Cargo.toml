@@ -1,0 +1,30 @@
+# This file is part of ICU4X. For terms of use, please see the file
+# called LICENSE at the top level of the ICU4X source tree
+# (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
+
+[package]
+name = "databake"
+description = "Trait that lets structs represent themselves as (const) Rust expressions"
+version = "0.3.0"
+categories = ["rust-patterns", "memory-management", "development-tools::procedural-macro-helpers", "development-tools::build-utils"]
+keywords = ["data-loading", "zerocopy", "serialization", "const"]
+
+authors = ["The ICU4X Project Developers"]
+license = "Unicode-3.0"
+repository = "https://github.com/suprohub/databake"
+edition = "2024"
+
+[package.metadata.workspaces]
+independent = true
+
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+derive = ["dep:databake-derive"]
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+databake-derive = { path = "derive", optional = true}
+

@@ -1,0 +1,32 @@
+# This file is part of ICU4X. For terms of use, please see the file
+# called LICENSE at the top level of the ICU4X source tree
+# (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
+
+[package]
+name = "databake-derive"
+description = "Custom derive for the databake crate"
+version = "0.3.0"
+categories = ["rust-patterns", "memory-management", "development-tools::procedural-macro-helpers", "development-tools::build-utils"]
+keywords = ["zerocopy", "serialization", "const"]
+
+authors = ["The ICU4X Project Developers"]
+license = "Unicode-3.0"
+repository = "https://github.com/suprohub/databake"
+edition = "2024"
+
+[package.metadata.workspaces]
+independent = true
+
+[lib]
+proc-macro = true
+path = "src/lib.rs"
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "2.0"
+synstructure = "0.13"
+
+[dev-dependencies]
+databake = { path = "..", features = ["derive"]}
+
