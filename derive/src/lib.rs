@@ -50,8 +50,12 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let crate_name = path.iter().next().unwrap();
     let crate_name_str = quote!(#crate_name).to_string();
 
+    let type_ident = &input.ident;               // e.g. Content
+    let full_type_path = quote! { #path::#type_ident };  // text_components::content::Content
+
     let is_enum = matches!(input.data, syn::Data::Enum(_));
 
+    // Information about one variant (or the struct itself)
     struct FieldSet {
         fields: Vec<syn::Ident>,
         kind: FieldsKind,
@@ -62,37 +66,37 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         Unit,
     }
 
-    // Build match pattern and return it along with the list of field idents.
-    // For enum variants we prefix the pattern with `Self::` to make the path unambiguous.
+    // Build match pattern and return it along with the field idents.
+    // For enum variants we use `#full_type_path::#variant`, for structs `#full_type_path`.
     let build_arms = |variant_ident: Option<&syn::Ident>, fs: &FieldSet| -> (TokenStream2, Vec<syn::Ident>) {
         let idents = &fs.fields;
         let pattern = match &fs.kind {
             FieldsKind::Named => {
                 if let Some(v) = variant_ident {
-                    quote! { Self::#v { #(#idents),* } }
+                    quote! { #full_type_path::#v { #(#idents),* } }
                 } else {
-                    quote! { Self { #(#idents),* } }
+                    quote! { #full_type_path { #(#idents),* } }
                 }
             }
             FieldsKind::Unnamed => {
                 if let Some(v) = variant_ident {
-                    quote! { Self::#v(#(#idents),*) }
+                    quote! { #full_type_path::#v(#(#idents),*) }
                 } else {
-                    quote! { Self(#(#idents),*) }
+                    quote! { #full_type_path(#(#idents),*) }
                 }
             }
             FieldsKind::Unit => {
                 if let Some(v) = variant_ident {
-                    quote! { Self::#v }
+                    quote! { #full_type_path::#v }
                 } else {
-                    quote! { Self }
+                    quote! { #full_type_path }
                 }
             }
         };
         (pattern, idents.clone())
     };
 
-    // Gather all variants (or the single struct "variant").
+    // Collect all variants (enum) or the single struct variant.
     let field_sets: Vec<(Option<syn::Ident>, FieldSet)> = if is_enum {
         structure
             .variants()
@@ -151,7 +155,7 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
                 if let Some(v) = variant_ident {
                     quote! { #path::#v { #(#fields),* } }
                 } else {
-                    quote! { #path::#input { #(#fields),* } }
+                    quote! { #path::#type_ident { #(#fields),* } }
                 }
             }
             FieldsKind::Unnamed => {
@@ -159,14 +163,14 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
                 if let Some(v) = variant_ident {
                     quote! { #path::#v(#(#fields),*) }
                 } else {
-                    quote! { #path::#input(#(#fields),*) }
+                    quote! { #path::#type_ident(#(#fields),*) }
                 }
             }
             FieldsKind::Unit => {
                 if let Some(v) = variant_ident {
                     quote! { #path::#v }
                 } else {
-                    quote! { #path::#input }
+                    quote! { #path::#type_ident }
                 }
             }
         };
@@ -181,9 +185,8 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
 
     let bake_impl = {
         let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-        let ty = &input.ident;
         quote! {
-            impl #impl_generics databake::Bake for #ty #ty_generics #where_clause {
+            impl #impl_generics databake::Bake for #type_ident #ty_generics #where_clause {
                 fn bake(&self, env: &databake::CrateEnv) -> databake::TokenStream {
                     env.insert(#crate_name_str);
                     match self {
@@ -206,9 +209,8 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
 
     let size_impl = {
         let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-        let ty = &input.ident;
         quote! {
-            impl #impl_generics databake::BakeSize for #ty #ty_generics #where_clause {
+            impl #impl_generics databake::BakeSize for #type_ident #ty_generics #where_clause {
                 fn borrows_size(&self) -> usize {
                     match self {
                         #(#size_arms)*
