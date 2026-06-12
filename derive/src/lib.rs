@@ -63,26 +63,27 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     }
 
     // Build match pattern and return it along with the list of field idents.
+    // For enum variants we prefix the pattern with `Self::` to make the path unambiguous.
     let build_arms = |variant_ident: Option<&syn::Ident>, fs: &FieldSet| -> (TokenStream2, Vec<syn::Ident>) {
         let idents = &fs.fields;
         let pattern = match &fs.kind {
             FieldsKind::Named => {
                 if let Some(v) = variant_ident {
-                    quote! { #v { #(#idents),* } }
+                    quote! { Self::#v { #(#idents),* } }
                 } else {
                     quote! { Self { #(#idents),* } }
                 }
             }
             FieldsKind::Unnamed => {
                 if let Some(v) = variant_ident {
-                    quote! { #v(#(#idents),*) }
+                    quote! { Self::#v(#(#idents),*) }
                 } else {
                     quote! { Self(#(#idents),*) }
                 }
             }
             FieldsKind::Unit => {
                 if let Some(v) = variant_ident {
-                    quote! { #v }
+                    quote! { Self::#v }
                 } else {
                     quote! { Self }
                 }
@@ -150,7 +151,6 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
                 if let Some(v) = variant_ident {
                     quote! { #path::#v { #(#fields),* } }
                 } else {
-                    // Corrected: removed stray #fields before braces
                     quote! { #path::#input { #(#fields),* } }
                 }
             }
