@@ -64,7 +64,7 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let build_arms = |variant_ident: Option<&syn::Ident>, fs: &FieldSet| -> (TokenStream2, Vec<syn::Ident>) {
         let idents = &fs.fields;
         let pat_idents: Vec<_> = idents.iter().map(|id| {
-            syn::Ident::new(&format!("{}_pat", id), id.span())
+            syn::Ident::new(&format!("_{}", id), id.span())
         }).collect();
 
         let pattern = match &fs.kind {
