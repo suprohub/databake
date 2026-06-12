@@ -50,11 +50,11 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let crate_name = path.iter().next().unwrap();
     let crate_name_str = quote!(#crate_name).to_string();
 
-    // Collect variant information
-    struct VariantInfo {
-        ident: syn::Ident,
-        fields: Vec<syn::Ident>, // binding names
-        field_kind: FieldsKind,
+    let is_enum = matches!(input.data, syn::Data::Enum(_));
+
+    struct FieldSet {
+        fields: Vec<syn::Ident>,
+        kind: FieldsKind,
     }
     enum FieldsKind {
         Named,
@@ -62,68 +62,112 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         Unit,
     }
 
-    let variants: Vec<_> = structure
-        .variants()
-        .iter()
-        .map(|v| {
-            let ident = v.ast().ident.clone();
-            let (fields, kind) = match &v.ast().fields {
-                Fields::Named(f) => (
-                    f.named.iter().map(|f| f.ident.clone().unwrap()).collect(),
-                    FieldsKind::Named,
-                ),
-                Fields::Unnamed(f) => (
-                    (0..f.unnamed.len())
-                        .map(|i| syn::Ident::new(&format!("__field_{}", i), ident.span()))
-                        .collect(),
-                    FieldsKind::Unnamed,
-                ),
-                Fields::Unit => (Vec::new(), FieldsKind::Unit),
-            };
-            VariantInfo {
-                ident,
-                fields,
-                field_kind: kind,
-            }
-        })
-        .collect();
-
-    // Pattern constructor that does NOT use `ref` – implicit borrowing will be used.
-    let make_pattern = |fields: &[syn::Ident], kind: &FieldsKind| -> TokenStream2 {
-        match kind {
+    // Build match pattern and return it along with the list of field idents.
+    let build_arms = |variant_ident: Option<&syn::Ident>, fs: &FieldSet| -> (TokenStream2, Vec<syn::Ident>) {
+        let idents = &fs.fields;
+        let pattern = match &fs.kind {
             FieldsKind::Named => {
-                let names = fields;
-                quote! { { #(#names),* } }
+                if let Some(v) = variant_ident {
+                    quote! { #v { #(#idents),* } }
+                } else {
+                    quote! { Self { #(#idents),* } }
+                }
             }
             FieldsKind::Unnamed => {
-                let names = fields;
-                quote! { ( #(#names),* ) }
+                if let Some(v) = variant_ident {
+                    quote! { #v(#(#idents),*) }
+                } else {
+                    quote! { Self(#(#idents),*) }
+                }
             }
-            FieldsKind::Unit => quote! {},
-        }
+            FieldsKind::Unit => {
+                if let Some(v) = variant_ident {
+                    quote! { #v }
+                } else {
+                    quote! { Self }
+                }
+            }
+        };
+        (pattern, idents.clone())
     };
 
-    let bake_arms = variants.iter().map(|v| {
-        let pattern = make_pattern(&v.fields, &v.field_kind);
-        let idents = &v.fields;
-        let variant_ident = &v.ident;
+    // Gather all variants (or the single struct "variant").
+    let field_sets: Vec<(Option<syn::Ident>, FieldSet)> = if is_enum {
+        structure
+            .variants()
+            .iter()
+            .map(|v| {
+                let ident = Some(v.ast().ident.clone());
+                let (fields, kind) = match &v.ast().fields {
+                    Fields::Named(f) => (
+                        f.named.iter().map(|f| f.ident.clone().unwrap()).collect(),
+                        FieldsKind::Named,
+                    ),
+                    Fields::Unnamed(f) => (
+                        (0..f.unnamed.len())
+                            .map(|i| syn::Ident::new(&format!("__field_{}", i), v.ast().ident.span()))
+                            .collect(),
+                        FieldsKind::Unnamed,
+                    ),
+                    Fields::Unit => (Vec::new(), FieldsKind::Unit),
+                };
+                (ident, FieldSet { fields, kind })
+            })
+            .collect()
+    } else {
+        let fs = match &input.data {
+            syn::Data::Struct(s) => match &s.fields {
+                Fields::Named(f) => FieldSet {
+                    fields: f.named.iter().map(|f| f.ident.clone().unwrap()).collect(),
+                    kind: FieldsKind::Named,
+                },
+                Fields::Unnamed(f) => FieldSet {
+                    fields: (0..f.unnamed.len())
+                        .map(|i| syn::Ident::new(&format!("__field_{}", i), input.ident.span()))
+                        .collect(),
+                    kind: FieldsKind::Unnamed,
+                },
+                Fields::Unit => FieldSet {
+                    fields: Vec::new(),
+                    kind: FieldsKind::Unit,
+                },
+            },
+            _ => unreachable!(),
+        };
+        vec![(None, fs)]
+    };
+
+    let bake_arms = field_sets.iter().map(|(variant_ident, fs)| {
+        let (pattern, idents) = build_arms(variant_ident.as_ref(), fs);
 
         let bakes = idents.iter().map(|id| {
-            // `id` is a reference (implicitly borrowed), we can call `.bake(env)` on it.
             quote! { let #id = #id.bake(env); }
         });
 
-        let constructor = match &v.field_kind {
+        let constructor = match &fs.kind {
             FieldsKind::Named => {
                 let fields = idents.iter().map(|id| quote! { #id: #id });
-                quote! { #path::#variant_ident #pattern { #(#fields),* } }
+                if let Some(v) = variant_ident {
+                    quote! { #path::#v { #(#fields),* } }
+                } else {
+                    // Corrected: removed stray #fields before braces
+                    quote! { #path::#input { #(#fields),* } }
+                }
             }
             FieldsKind::Unnamed => {
                 let fields = idents.iter().map(|id| quote! { #id });
-                quote! { #path::#variant_ident(#(#fields),*) }
+                if let Some(v) = variant_ident {
+                    quote! { #path::#v(#(#fields),*) }
+                } else {
+                    quote! { #path::#input(#(#fields),*) }
+                }
             }
             FieldsKind::Unit => {
-                quote! { #path::#variant_ident }
+                if let Some(v) = variant_ident {
+                    quote! { #path::#v }
+                } else {
+                    quote! { #path::#input }
+                }
             }
         };
 
@@ -138,12 +182,10 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let bake_impl = {
         let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
         let ty = &input.ident;
-
         quote! {
             impl #impl_generics databake::Bake for #ty #ty_generics #where_clause {
                 fn bake(&self, env: &databake::CrateEnv) -> databake::TokenStream {
                     env.insert(#crate_name_str);
-                    // `self` is &Self -> match ergonomics provides implicit references
                     match self {
                         #(#bake_arms)*
                     }
@@ -152,12 +194,9 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         }
     };
 
-    let size_arms = variants.iter().map(|v| {
-        let pattern = make_pattern(&v.fields, &v.field_kind);
-        let idents = &v.fields;
-        let sizes = idents.iter().map(|id| {
-            quote! { #id.borrows_size() }
-        });
+    let size_arms = field_sets.iter().map(|(variant_ident, fs)| {
+        let (pattern, idents) = build_arms(variant_ident.as_ref(), fs);
+        let sizes = idents.iter().map(|id| quote! { #id.borrows_size() });
         quote! {
             #pattern => {
                 0 #(+ #sizes)*
@@ -168,7 +207,6 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let size_impl = {
         let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
         let ty = &input.ident;
-
         quote! {
             impl #impl_generics databake::BakeSize for #ty #ty_generics #where_clause {
                 fn borrows_size(&self) -> usize {
