@@ -24,7 +24,7 @@ use syn::{
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
-    Data, DeriveInput, Ident, Path, PathSegment, Token, Visibility,
+    DeriveInput, Fields, Ident, Path, PathSegment, Token,
 };
 use synstructure::{AddBounds, Structure};
 
@@ -76,35 +76,63 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         .0;
 
     let bake_body = structure.each_variant(|vi| {
-        let recursive_calls = vi.bindings().iter().map(|b| {
-            let ident = b.binding.clone();
-            quote! { let #ident =  #ident.bake(env); }
+        let bindings = vi.bindings();
+        let field_idents: Vec<_> = bindings.iter().map(|b| &b.binding).collect();
+
+        let pattern = match &vi.ast().fields {
+            Fields::Named(_) => quote! { { #(#field_idents),* } },
+            Fields::Unnamed(_) => quote! { ( #(#field_idents),* ) },
+            Fields::Unit => quote! {},
+        };
+
+        let recursive_calls = field_idents.iter().map(|ident| {
+            quote! { let #ident = #ident.bake(env); }
         });
 
-        let constructor = vi.construct(|f, i| {
-            assert!(
-                f.vis == syn::parse_str::<Visibility>("pub").unwrap()
-                    || matches!(input.data, Data::Enum(_)),
-                "deriving Bake requires public fields"
-            );
-            let ident = &vi.bindings()[i].binding;
-            quote! { # #ident }
-        });
+        let variant_ident = &vi.ast().ident;
+        let constructor = match &vi.ast().fields {
+            Fields::Named(_) => {
+                let field_values = field_idents.iter().map(|ident| {
+                    let name = ident; // field name
+                    quote! { #name: #name }
+                });
+                quote! { #path::#variant_ident { #(#field_values),* } }
+            }
+            Fields::Unnamed(_) => {
+                let field_values = field_idents.iter().map(|ident| quote! { #ident });
+                quote! { #path::#variant_ident(#(#field_values),*) }
+            }
+            Fields::Unit => {
+                quote! { #path::#variant_ident }
+            }
+        };
 
         quote! {
-            #(#recursive_calls)*
-            databake::quote! { #path::#constructor }
+            #pattern => {
+                #(#recursive_calls)*
+                databake::quote! { #constructor }
+            }
         }
     });
 
     let borrows_size_body = structure.each_variant(|vi| {
-        let recursive_calls = vi.bindings().iter().map(|b| {
-            let ident = b.binding.clone();
+        let bindings = vi.bindings();
+        let field_idents: Vec<_> = bindings.iter().map(|b| &b.binding).collect();
+
+        let pattern = match &vi.ast().fields {
+            Fields::Named(_) => quote! { { #(#field_idents),* } },
+            Fields::Unnamed(_) => quote! { ( #(#field_idents),* ) },
+            Fields::Unit => quote! {},
+        };
+
+        let recursive_calls = field_idents.iter().map(|ident| {
             quote! { #ident.borrows_size() }
         });
 
         quote! {
-            0 #(+ #recursive_calls)*
+            #pattern => {
+                0 #(+ #recursive_calls)*
+            }
         }
     });
 
