@@ -88,7 +88,7 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         })
         .collect();
 
-    // Helper to build a pattern from a list of idents
+    // Pattern constructor that does NOT use `ref` – implicit borrowing will be used.
     let make_pattern = |fields: &[syn::Ident], kind: &FieldsKind| -> TokenStream2 {
         match kind {
             FieldsKind::Named => {
@@ -108,12 +108,11 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         let idents = &v.fields;
         let variant_ident = &v.ident;
 
-        // Recursive bake calls
         let bakes = idents.iter().map(|id| {
+            // `id` is a reference (implicitly borrowed), we can call `.bake(env)` on it.
             quote! { let #id = #id.bake(env); }
         });
 
-        // Constructor
         let constructor = match &v.field_kind {
             FieldsKind::Named => {
                 let fields = idents.iter().map(|id| quote! { #id: #id });
@@ -144,7 +143,8 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
             impl #impl_generics databake::Bake for #ty #ty_generics #where_clause {
                 fn bake(&self, env: &databake::CrateEnv) -> databake::TokenStream {
                     env.insert(#crate_name_str);
-                    match *self {
+                    // `self` is &Self -> match ergonomics provides implicit references
+                    match self {
                         #(#bake_arms)*
                     }
                 }
@@ -152,7 +152,6 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         }
     };
 
-    // ---------- BakeSize impl ----------
     let size_arms = variants.iter().map(|v| {
         let pattern = make_pattern(&v.fields, &v.field_kind);
         let idents = &v.fields;
@@ -173,7 +172,7 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         quote! {
             impl #impl_generics databake::BakeSize for #ty #ty_generics #where_clause {
                 fn borrows_size(&self) -> usize {
-                    match *self {
+                    match self {
                         #(#size_arms)*
                     }
                 }
