@@ -2,10 +2,6 @@
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
 
-#![warn(missing_docs)]
-
-//! Custom derives for `Bake`
-
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -50,12 +46,11 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     let crate_name = path.iter().next().unwrap();
     let crate_name_str = quote!(#crate_name).to_string();
 
-    let type_ident = &input.ident;               // e.g. Content
-    let full_type_path = quote! { #path::#type_ident };  // text_components::content::Content
+    let type_ident = &input.ident;
+    let full_type_path = quote! { #path::#type_ident };
 
     let is_enum = matches!(input.data, syn::Data::Enum(_));
 
-    // Information about one variant (or the struct itself)
     struct FieldSet {
         fields: Vec<syn::Ident>,
         kind: FieldsKind,
@@ -66,23 +61,25 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         Unit,
     }
 
-    // Build match pattern and return it along with the field idents.
-    // For enum variants we use `#full_type_path::#variant`, for structs `#full_type_path`.
     let build_arms = |variant_ident: Option<&syn::Ident>, fs: &FieldSet| -> (TokenStream2, Vec<syn::Ident>) {
         let idents = &fs.fields;
+        let pat_idents: Vec<_> = idents.iter().map(|id| {
+            syn::Ident::new(&format!("{}_pat", id), id.span())
+        }).collect();
+
         let pattern = match &fs.kind {
             FieldsKind::Named => {
                 if let Some(v) = variant_ident {
-                    quote! { #full_type_path::#v { #(#idents),* } }
+                    quote! { #full_type_path::#v { #(#idents: #pat_idents),* } }
                 } else {
-                    quote! { #full_type_path { #(#idents),* } }
+                    quote! { #full_type_path { #(#idents: #pat_idents),* } }
                 }
             }
             FieldsKind::Unnamed => {
                 if let Some(v) = variant_ident {
-                    quote! { #full_type_path::#v(#(#idents),*) }
+                    quote! { #full_type_path::#v(#(#pat_idents),*) }
                 } else {
-                    quote! { #full_type_path(#(#idents),*) }
+                    quote! { #full_type_path(#(#pat_idents),*) }
                 }
             }
             FieldsKind::Unit => {
@@ -93,10 +90,9 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
                 }
             }
         };
-        (pattern, idents.clone())
+        (pattern, pat_idents)
     };
 
-    // Collect all variants (enum) or the single struct variant.
     let field_sets: Vec<(Option<syn::Ident>, FieldSet)> = if is_enum {
         structure
             .variants()
@@ -143,10 +139,11 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     };
 
     let bake_arms = field_sets.iter().map(|(variant_ident, fs)| {
-        let (pattern, idents) = build_arms(variant_ident.as_ref(), fs);
+        let (pattern, pat_idents) = build_arms(variant_ident.as_ref(), fs);
+        let idents = &fs.fields;
 
-        let bakes = idents.iter().map(|id| {
-            quote! { let #id = #id.bake(env); }
+        let bakes = pat_idents.iter().zip(idents.iter()).map(|(pat_id, orig_id)| {
+            quote! { let #orig_id = #pat_id.bake(env); }
         });
 
         let constructor = match &fs.kind {
@@ -198,8 +195,8 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
     };
 
     let size_arms = field_sets.iter().map(|(variant_ident, fs)| {
-        let (pattern, idents) = build_arms(variant_ident.as_ref(), fs);
-        let sizes = idents.iter().map(|id| quote! { #id.borrows_size() });
+        let (pattern, pat_idents) = build_arms(variant_ident.as_ref(), fs);
+        let sizes = pat_idents.iter().map(|id| quote! { #id.borrows_size() });
         quote! {
             #pattern => {
                 0 #(+ #sizes)*

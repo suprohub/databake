@@ -87,6 +87,7 @@
 
 mod alloc;
 pub mod converter;
+mod custom;
 mod primitives;
 
 #[doc(no_inline)]

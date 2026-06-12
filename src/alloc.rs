@@ -277,59 +277,64 @@ fn string() {
     assert_eq!(BakeSize::borrows_size(&"hello".to_owned()), 5);
 }
 
-macro_rules! smart_pointer {
-    ($type:ty, $constuctor:path) => {
-        impl<T> Bake for $type
-        where
-            T: Bake,
-        {
+macro_rules! smart_pointer_sized {
+    ($type:ty, $constructor:path) => {
+        impl<T: Sized + Bake> Bake for $type {
             fn bake(&self, ctx: &CrateEnv) -> TokenStream {
                 ctx.insert("alloc");
                 let data = std::ops::Deref::deref(self).bake(ctx);
-                quote! {
-                    $constuctor(#data)
-                }
+                quote! { $constructor(#data) }
+            }
+        }
+        impl<T: Sized + BakeSize> BakeSize for $type {
+            fn borrows_size(&self) -> usize {
+                (**self).borrows_size()
             }
         }
     };
 }
 
-smart_pointer!(Box<T>, Box::new);
-smart_pointer!(alloc::rc::Rc<T>, alloc::rc::Rc::new);
-smart_pointer!(alloc::sync::Arc<T>, alloc::arc::Arc::new);
-
-impl<T> BakeSize for Box<T>
-where
-    T: BakeSize,
-{
-    fn borrows_size(&self) -> usize {
-        (**self).borrows_size()
-    }
+macro_rules! smart_pointer_unsized {
+    ($type:ty, $constructor:expr) => {
+        impl<T: Bake> Bake for $type {
+            fn bake(&self, ctx: &CrateEnv) -> TokenStream {
+                ctx.insert("alloc");
+                let vec: Vec<_> = self.iter().collect();
+                let baked = vec.bake(ctx);
+                quote! { $constructor(#baked) }
+            }
+        }
+        impl<T: BakeSize> BakeSize for $type {
+            fn borrows_size(&self) -> usize {
+                self.iter().map(BakeSize::borrows_size).sum()
+            }
+        }
+    };
 }
 
-impl<T> BakeSize for alloc::rc::Rc<T>
-where
-    T: BakeSize,
-{
-    fn borrows_size(&self) -> usize {
-        (**self).borrows_size()
-    }
-}
+smart_pointer_sized!(Box<T>, Box::new);
+smart_pointer_unsized!(Box<[T]>, |v: Vec<T>| v.into_boxed_slice());
 
-impl<T> BakeSize for alloc::sync::Arc<T>
-where
-    T: BakeSize,
-{
-    fn borrows_size(&self) -> usize {
-        (**self).borrows_size()
-    }
-}
+smart_pointer_sized!(alloc::rc::Rc<T>, alloc::rc::Rc::new);
+smart_pointer_unsized!(alloc::rc::Rc<[T]>, |v: Vec<T>| alloc::rc::Rc::from(
+    v.into_boxed_slice()
+));
+
+smart_pointer_sized!(alloc::sync::Arc<T>, alloc::sync::Arc::new);
+smart_pointer_unsized!(alloc::sync::Arc<[T]>, |v: Vec<T>| alloc::sync::Arc::from(
+    v.into_boxed_slice()
+));
 
 #[test]
-fn rc() {
+fn smart_pointers() {
+    test_bake!(Box<char>, Box::new('a'), alloc);
     test_bake!(alloc::rc::Rc<char>, alloc::rc::Rc::new('b'), alloc);
-    let s = alloc::rc::Rc::new("hello");
-    assert_eq!(BakeSize::borrows_size(&s), 5);
-    let b = Box::new("world");
-    assert_eq!(BakeSize::borrows_size(&b), 5);
+    test_bake!(alloc::sync::Arc<char>, alloc::sync::Arc::new('c'), alloc);
+
+    let boxed: Box<[&str]> = vec!["hello", "world"].into_boxed_slice();
+    assert_eq!(BakeSize::borrows_size(&boxed), 10);
+    let rced: alloc::rc::Rc<[&str]> = vec!["foo", "bar"].into();
+    assert_eq!(BakeSize::borrows_size(&rced), 6);
+    let arced: alloc::sync::Arc<[&str]> = vec!["x", "y", "z"].into();
+    assert_eq!(BakeSize::borrows_size(&arced), 3);
 }

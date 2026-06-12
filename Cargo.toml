@@ -22,9 +22,11 @@ all-features = true
 
 [features]
 derive = ["dep:databake-derive"]
+uuid = ["dep:uuid"]
 
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"
 databake-derive = { path = "derive", optional = true}
+uuid = { version = "*", optional = true }
 
