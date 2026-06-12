@@ -142,13 +142,11 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
         let (pattern, pat_idents) = build_arms(variant_ident.as_ref(), fs);
         let idents = &fs.fields;
 
-        let bakes = pat_idents.iter().zip(idents.iter()).map(|(pat_id, orig_id)| {
-            quote! { let #orig_id = #pat_id.bake(env); }
-        });
-
         let constructor = match &fs.kind {
             FieldsKind::Named => {
-                let fields = idents.iter().map(|id| quote! { #id: #id });
+                let fields = idents.iter().zip(pat_idents.iter()).map(|(id, pat)| {
+                    quote! { #id: #pat.bake(env) }
+                });
                 if let Some(v) = variant_ident {
                     quote! { #path::#v { #(#fields),* } }
                 } else {
@@ -156,7 +154,9 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
                 }
             }
             FieldsKind::Unnamed => {
-                let fields = idents.iter().map(|id| quote! { #id });
+                let fields = pat_idents.iter().map(|pat| {
+                    quote! { #pat.bake(env) }
+                });
                 if let Some(v) = variant_ident {
                     quote! { #path::#v(#(#fields),*) }
                 } else {
@@ -174,7 +174,6 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
 
         quote! {
             #pattern => {
-                #(#bakes)*
                 databake::quote! { #constructor }
             }
         }
@@ -196,10 +195,10 @@ fn bake_derive_impl(input: &DeriveInput) -> TokenStream2 {
 
     let size_arms = field_sets.iter().map(|(variant_ident, fs)| {
         let (pattern, pat_idents) = build_arms(variant_ident.as_ref(), fs);
-        let sizes = pat_idents.iter().map(|id| quote! { #id.borrows_size() });
+        let sum_expr = quote! { 0 #(+ #pat_idents.borrows_size())* };
         quote! {
             #pattern => {
-                0 #(+ #sizes)*
+                #sum_expr
             }
         }
     });
